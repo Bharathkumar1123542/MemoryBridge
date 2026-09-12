@@ -1,0 +1,44 @@
+{
+  "family": "memorybridge-web",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/memorybridge-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/memorybridge-web-task-role",
+  "containerDefinitions": [
+    {
+      "name": "web",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/memorybridge-web:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV",              "value": "production" },
+        { "name": "NEXT_PUBLIC_APP_NAME",  "value": "MemoryBridge" }
+      ],
+      "secrets": [
+        {
+          "name": "INTERNAL_API_BASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:memorybridge/internal-api-base-url"
+        },
+        {
+          "name": "SESSION_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:memorybridge/session-secret"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/memorybridge-web",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
