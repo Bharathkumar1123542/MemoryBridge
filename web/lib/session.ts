@@ -1,4 +1,4 @@
-/**
+﻿/**
  * web/lib/session.ts
  * ------------------
  * Session management for the MemoryBridge BFF layer.
@@ -27,6 +27,16 @@ import { cookies } from "next/headers";
 import { createHmac, randomUUID } from "crypto";
 
 // ---------------------------------------------------------------------------
+// Custom error class for authentication failures
+// ---------------------------------------------------------------------------
+export class UnauthorizedError extends Error {
+  constructor(message: string = "Not authenticated") {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Session data shape
 // ---------------------------------------------------------------------------
 export interface SessionData {
@@ -46,7 +56,8 @@ function getSessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
   if (!secret || secret.length < 32) {
     throw new Error(
-      "SESSION_SECRET env var is not set or is too short (min 32 chars)."
+      "SESSION_SECRET env var is not set or is too short (min 32 chars). " +
+      "Use a cryptographically random value: openssl rand -base64 48"
     );
   }
   return secret;
@@ -78,6 +89,9 @@ export async function getSession(): Promise<IronSession<SessionData>> {
 // Matches the HMAC computed in agent-backend/app/main.py:verify_internal_token
 // ---------------------------------------------------------------------------
 export function computeInternalToken(sessionId: string): string {
+  if (!sessionId || !sessionId.trim()) {
+    throw new Error("sessionId is required for computing internal token");
+  }
   return createHmac("sha256", getSessionSecret())
     .update(sessionId)
     .digest("hex");
@@ -88,7 +102,7 @@ export function computeInternalToken(sessionId: string): string {
 // ---------------------------------------------------------------------------
 export function buildInternalHeaders(session: IronSession<SessionData>): Record<string, string> {
   if (!session.isLoggedIn || !session.sessionId) {
-    throw new Error("Not authenticated.");
+    throw new UnauthorizedError("Session is not authenticated");
   }
   return {
     "X-Internal-Token": computeInternalToken(session.sessionId),
@@ -112,6 +126,7 @@ export async function createSession(params: {
   assistedUserId: string | null;
 }): Promise<IronSession<SessionData>> {
   const session = await getSession();
+  // Note: UUID v4 collision probability is negligible (2^-122) for practical purposes
   session.sessionId = randomUUID();
   session.isLoggedIn = true;
   session.subjectType = params.subjectType;

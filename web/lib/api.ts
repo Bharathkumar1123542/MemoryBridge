@@ -1,4 +1,4 @@
-/**
+﻿/**
  * web/lib/api.ts
  * ---------------
  * Typed fetch wrapper for calling agent-backend from Route Handlers.
@@ -20,8 +20,15 @@ import { buildInternalHeaders, SessionData } from "./session";
 const BASE_URL =
   process.env.INTERNAL_API_BASE_URL ?? "http://localhost:8000";
 
+// Validate BASE_URL in production
+if (process.env.NODE_ENV === "production" && !process.env.INTERNAL_API_BASE_URL) {
+  throw new Error(
+    "INTERNAL_API_BASE_URL environment variable is required in production"
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Core fetch helper
+// Core fetch helper with error context
 // ---------------------------------------------------------------------------
 async function agentFetch(
   session: IronSession<SessionData>,
@@ -30,11 +37,20 @@ async function agentFetch(
 ): Promise<Response> {
   const headers = buildInternalHeaders(session);
   const url = `${BASE_URL}/internal${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options.headers ?? {}) },
-  });
-  return res;
+  
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: { ...headers, ...(options.headers ?? {}) },
+    });
+    return res;
+  } catch (error) {
+    // Wrap network errors with endpoint context for easier debugging
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to call agent-backend endpoint ${path}: ${errorMessage}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +72,8 @@ export async function apiListRoutines(
   session: IronSession<SessionData>,
   assistedUserId: string
 ) {
-  return agentFetch(session, `/routines?assisted_user_id=${assistedUserId}`);
+  const params = new URLSearchParams({ assisted_user_id: assistedUserId });
+  return agentFetch(session, `/routines?${params}`);
 }
 
 export async function apiApproveRoutine(
@@ -81,7 +98,8 @@ export async function apiGetToday(
   session: IronSession<SessionData>,
   assistedUserId: string
 ) {
-  return agentFetch(session, `/today?assisted_user_id=${assistedUserId}`);
+  const params = new URLSearchParams({ assisted_user_id: assistedUserId });
+  return agentFetch(session, `/today?${params}`);
 }
 
 export async function apiCompleteRoutine(
