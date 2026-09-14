@@ -1,4 +1,4 @@
-"""
+﻿"""
 agent-backend.app.routers.assisted
 -------------------------------------
 FastAPI router for Maria's (assisted user) /today interface endpoints.
@@ -12,6 +12,8 @@ The /help endpoint implements fail-open design (architecture.md §7.6):
     - The Escalation Agent runs with a hard 3-second timeout.
     - If the agent fails or times out, the alert is STILL created using
       Maria's raw note. The alert's existence never depends on the agent.
+    - If the MCP write call fails, the response includes "delayed": true
+      so the caller can show appropriate UI feedback.
 """
 
 import logging
@@ -140,6 +142,9 @@ async def help_me(body: HelpRequest, request: Request):
         2. Whether the agent succeeds or falls back, create the alert via MCP.
         3. The alert is ALWAYS created — the agent's success only affects
            how informative the category + summary are.
+        4. If the MCP write fails (infrastructure issue), return notified=true
+           with delayed=true so the UI can warn the user that the alert may
+           be delayed.
 
     Required headers (set by web/lib/session.ts via BFF):
         X-Assisted-User-Id  — the assisted user's ID
@@ -170,11 +175,13 @@ async def help_me(body: HelpRequest, request: Request):
 
     # ------------------------------------------------------------------
     # Create the alert via MCP — fail-open: if this write fails, we log
-    # the error but still return { notified: true } because the failure
-    # is an infrastructure issue, not a user error. The caregiver will
-    # see the alert whenever the DB connection recovers.
+    # the error and return notified=true with delayed=true so the caller
+    # knows the alert may be delayed (but will eventually appear when the
+    # DB connection recovers).
     # ------------------------------------------------------------------
     mcp = request.app.state.mcp
+    alert_delayed = False
+    
     try:
         await mcp.create_help_alert(
             assisted_user_id=assisted_user_id,
@@ -189,5 +196,9 @@ async def help_me(body: HelpRequest, request: Request):
         logger.error(
             "create_help_alert MCP call failed (alert may be delayed): %s", exc
         )
+        alert_delayed = True
 
-    return {"notified": True}
+    return {
+        "notified": True,
+        "delayed": alert_delayed,
+    }
