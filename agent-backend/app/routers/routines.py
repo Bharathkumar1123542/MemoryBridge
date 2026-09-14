@@ -1,25 +1,25 @@
-"""
+﻿"""
 agent-backend.app.routers.routines
 ------------------------------------
 FastAPI router for routine management endpoints.
 
-Implements the pipeline described in architecture.md §7 and
-the endpoint specs in implementation.md §10.
+Implements the pipeline described in architecture.md Â§7 and
+the endpoint specs in implementation.md Â§10.
 
 Endpoints:
-    POST   /internal/routines                  — create + run pipeline
-    GET    /internal/routines                  — list all routines
-    POST   /internal/routines/{id}/approve     — caregiver approve
-    POST   /internal/routines/{id}/reject      — caregiver reject
+    POST   /internal/routines                  â€” create + run pipeline
+    GET    /internal/routines                  â€” list all routines
+    POST   /internal/routines/{id}/approve     â€” caregiver approve
+    POST   /internal/routines/{id}/reject      â€” caregiver reject
 
-Pipeline stages (architecture.md §7):
-    Stage 0: Deterministic gate (gate.py)       — no Bedrock calls if blocked
-    Stage 1: Routine Planning Agent             — via Strands Graph
-    Stage 2: Semantic Safety Reviewer           — via Strands Graph (conditional)
-    Stage 3: Dementia-Friendly Communication    — via Strands Graph (conditional)
+Pipeline stages (architecture.md Â§7):
+    Stage 0: Deterministic gate (gate.py)       â€” no Bedrock calls if blocked
+    Stage 1: Routine Planning Agent             â€” via Strands Graph
+    Stage 2: Semantic Safety Reviewer           â€” via Strands Graph (conditional)
+    Stage 3: Dementia-Friendly Communication    â€” via Strands Graph (conditional)
 
-All write operations go through the MCP client — no router ever touches
-the database directly (architecture.md §1 Principle 4).
+All write operations go through the MCP client â€” no router ever touches
+the database directly (architecture.md Â§1 Principle 4).
 """
 
 import json
@@ -53,7 +53,7 @@ class RejectRoutineRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Output parsers — extract structured fields from agent text responses
+# Output parsers â€” extract structured fields from agent text responses
 # ---------------------------------------------------------------------------
 
 _TITLE_RE = re.compile(r'"title"\s*:\s*"([^"]+)"', re.IGNORECASE)
@@ -92,6 +92,7 @@ def _parse_plan_output(text: str) -> dict:
             "steps": steps,
         }
     except (json.JSONDecodeError, ValueError):
+        logger.warning("_parse_plan_output: JSON parse failed, falling back to regex extraction")
         pass
 
     # Regex fallback
@@ -128,10 +129,11 @@ def _parse_communicate_output(text: str, original_steps: list[str]) -> list[str]
         if isinstance(data, dict) and "steps" in data:
             return [str(s) for s in data["steps"]]
     except (json.JSONDecodeError, ValueError):
+        logger.warning("_parse_plan_output: JSON parse failed, falling back to regex extraction")
         pass
 
     # Fallback: return original plan steps
-    logger.warning("_parse_communicate_output: could not parse — using original steps.")
+    logger.warning("_parse_communicate_output: could not parse â€” using original steps.")
     return original_steps
 
 
@@ -169,7 +171,7 @@ async def create_routine(body: CreateRoutineRequest, request: Request):
     mcp = request.app.state.mcp
 
     # ------------------------------------------------------------------
-    # Stage 0 — Deterministic gate (zero Bedrock calls on block)
+    # Stage 0 â€” Deterministic gate (zero Bedrock calls on block)
     # ------------------------------------------------------------------
     gate_result = evaluate_deterministic_gate(body.raw_request)
 
@@ -238,7 +240,7 @@ async def create_routine(body: CreateRoutineRequest, request: Request):
     )
 
     # ------------------------------------------------------------------
-    # Stages 1–3 — Strands Graph (plan → safety_review → communicate)
+    # Stages 1â€“3 â€” Strands Graph (plan â†’ safety_review â†’ communicate)
     # ------------------------------------------------------------------
     try:
         planning_tools = mcp.get_planning_tools()
@@ -378,7 +380,7 @@ async def list_routines(request: Request, assisted_user_id: str):
     """
     Return all routines for the given assisted user, newest first.
 
-    Includes rejected entries with their reason (architecture.md §6.2 —
+    Includes rejected entries with their reason (architecture.md Â§6.2 â€”
     transparency: caregivers can see why a request was blocked).
     """
     mcp = request.app.state.mcp
@@ -407,7 +409,7 @@ async def approve_routine(routine_id: str, request: Request):
     Caregiver approves a pending routine. Sets status to 'active'.
 
     This is the ONLY code path in the system that can set status='active'
-    (architecture.md §6.2, ADR-002).
+    (architecture.md Â§6.2, ADR-002).
     """
     # Extract caregiver_id from the verified session headers
     caregiver_id = request.headers.get("X-Caregiver-Id", "")
@@ -464,3 +466,4 @@ async def reject_routine(routine_id: str, body: RejectRoutineRequest, request: R
         ) from exc
 
     return {"id": routine_id, "status": result.get("status", "rejected")}
+

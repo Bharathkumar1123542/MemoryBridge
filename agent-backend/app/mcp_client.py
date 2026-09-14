@@ -48,6 +48,7 @@ WRITE_TOOLS: frozenset[str] = frozenset({
     "mark_routine_complete",
     "create_help_alert",
     "get_alerts",
+    "acknowledge_alert",
     "log_safety_decision",
 })
 
