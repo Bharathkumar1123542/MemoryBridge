@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
@@ -30,17 +30,26 @@ const STATUS_CLASS: Record<string, string> = {
 export default function RoutinesPage() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    const res = await fetch("/api/routines");
-    if (res.ok) {
-      const data = await res.json();
-      setRoutines(data.routines ?? []);
+    setError(null);
+    try {
+      const res = await fetch("/api/routines");
+      if (res.ok) {
+        const data = await res.json();
+        setRoutines(data.routines ?? []);
+      } else {
+        setError("Failed to load routines. Please try again.");
+      }
+    } catch (err) {
+      setError("Network error. Please check your connection.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { load(); }, []);
@@ -61,7 +70,10 @@ export default function RoutinesPage() {
   }
 
   async function reject(id: string) {
+    // TODO: Replace prompt() with accessible modal component
     const reason = prompt("Reason for rejection (optional):");
+    if (reason === null) return; // User cancelled
+    
     setActionLoading(id + "-reject");
     await fetch(`/api/routines/${id}/reject`, {
       method: "POST",
@@ -83,16 +95,32 @@ export default function RoutinesPage() {
             <h1 className="page-title">Routines</h1>
             <p className="page-subtitle">Review, approve, or manage Maria&apos;s care routines.</p>
           </div>
-          <Link href="/routines/new" className="btn btn-primary">+ New Routine</Link>
+          {routines.length > 0 && (
+            <Link href="/routines/new" className="btn btn-primary">+ New Routine</Link>
+          )}
         </div>
+
+        {error && (
+          <div className="alert-box alert-box-error mb-3" role="alert">
+            <span>⚠</span> {error}
+            <button onClick={load} className="btn btn-ghost btn-sm ml-2">Retry</button>
+          </div>
+        )}
 
         {loading ? (
           <div style={{ textAlign: "center", padding: "3rem" }}>
-            <div className="spinner" style={{ width: 36, height: 36, borderWidth: 3, margin: "0 auto" }} />
+            <div 
+              className="spinner" 
+              style={{ width: 36, height: 36, borderWidth: 3, margin: "0 auto" }}
+              role="status"
+              aria-live="polite"
+              aria-label="Loading routines"
+            />
+            <span className="sr-only">Loading routines...</span>
           </div>
         ) : routines.length === 0 ? (
           <div className="empty-state">
-            <span className="empty-state-icon">📋</span>
+            <span className="empty-state-icon" aria-hidden="true">📋</span>
             <h3>No routines yet</h3>
             <p>Create your first routine to get started.</p>
             <Link href="/routines/new" className="btn btn-primary mt-3">Create first routine</Link>
@@ -102,7 +130,8 @@ export default function RoutinesPage() {
             {pending.length > 0 && (
               <section>
                 <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--color-warning)", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span>⏳</span> Awaiting your review ({pending.length})
+                  <span aria-hidden="true">⏳</span>
+                  <span>Awaiting your review ({pending.length})</span>
                 </h2>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "2rem" }}>
                   {pending.map(r => (
@@ -138,9 +167,27 @@ function RoutineCard({ routine, expanded, onToggle, onApprove, onReject, actionL
   onReject: () => void;
   actionLoading: string | null;
 }) {
+  const buttonId = `routine-toggle-${routine.id}`;
+  
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggle();
+    }
+  };
+  
   return (
     <div className="routine-card">
-      <div className="routine-card-header" onClick={onToggle} role="button" tabIndex={0} aria-expanded={expanded} onKeyDown={e => e.key === "Enter" && onToggle()}>
+      <div 
+        id={buttonId}
+        className="routine-card-header" 
+        onClick={onToggle} 
+        role="button" 
+        tabIndex={0} 
+        aria-expanded={expanded}
+        aria-controls={`routine-content-${routine.id}`}
+        onKeyDown={handleKeyDown}
+      >
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 style={{ marginBottom: "0.2rem" }}>{routine.title || "Untitled routine"}</h3>
           {routine.scheduled_time && (
@@ -152,16 +199,22 @@ function RoutineCard({ routine, expanded, onToggle, onApprove, onReject, actionL
         <span className={`badge ${STATUS_CLASS[routine.status] ?? "badge-acknowledged"}`}>
           {STATUS_LABEL[routine.status] ?? routine.status}
         </span>
-        <span style={{ color: "var(--color-text-muted)", fontSize: "0.9rem", marginLeft: "0.5rem" }}>{expanded ? "▲" : "▼"}</span>
+        <span style={{ color: "var(--color-text-muted)", fontSize: "0.9rem", marginLeft: "0.5rem" }} aria-hidden="true">
+          {expanded ? "▲" : "▼"}
+        </span>
       </div>
 
       {expanded && (
-        <div className="routine-card-body">
+        <div 
+          id={`routine-content-${routine.id}`}
+          className="routine-card-body"
+          aria-labelledby={buttonId}
+        >
           <hr className="divider" style={{ margin: "0 0 1rem" }} />
 
           {routine.status === "rejected" && routine.safety_reason && (
-            <div className="alert-box alert-box-error mb-2" style={{ fontSize: "0.88rem" }}>
-              <span>ℹ</span> {routine.safety_reason}
+            <div className="alert-box alert-box-error mb-2" style={{ fontSize: "0.88rem" }} role="alert">
+              <span aria-hidden="true">ℹ</span> {routine.safety_reason}
             </div>
           )}
 
@@ -170,7 +223,7 @@ function RoutineCard({ routine, expanded, onToggle, onApprove, onReject, actionL
               {(routine.steps ?? []).map(s => (
                 <li key={s.step_number} className="routine-step">
                   <span className="routine-step-num">{s.step_number}.</span>
-                  <span className="routine-step-text">{s.simplified_text ?? s.text}</span>
+                  <span className="routine-step-text">{s.simplified_text ?? s.text ?? ""}</span>
                 </li>
               ))}
             </ol>
@@ -183,16 +236,30 @@ function RoutineCard({ routine, expanded, onToggle, onApprove, onReject, actionL
                 className="btn btn-success"
                 onClick={onApprove}
                 disabled={actionLoading === routine.id + "-approve"}
+                aria-busy={actionLoading === routine.id + "-approve"}
               >
-                {actionLoading === routine.id + "-approve" ? <span className="spinner" /> : "✓ Approve"}
+                {actionLoading === routine.id + "-approve" ? (
+                  <span role="status" aria-label="Processing approval">
+                    <span className="spinner" aria-hidden="true" />
+                  </span>
+                ) : (
+                  "✓ Approve"
+                )}
               </button>
               <button
                 id={`reject-${routine.id}`}
                 className="btn btn-danger"
                 onClick={onReject}
                 disabled={actionLoading === routine.id + "-reject"}
+                aria-busy={actionLoading === routine.id + "-reject"}
               >
-                {actionLoading === routine.id + "-reject" ? <span className="spinner" /> : "✕ Reject"}
+                {actionLoading === routine.id + "-reject" ? (
+                  <span role="status" aria-label="Processing rejection">
+                    <span className="spinner" aria-hidden="true" />
+                  </span>
+                ) : (
+                  "✕ Reject"
+                )}
               </button>
             </div>
           )}
