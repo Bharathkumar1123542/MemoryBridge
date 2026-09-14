@@ -1,4 +1,4 @@
-"""
+﻿"""
 memorybridge_mcp.tools_read
 ----------------------------
 Read-only MCP tools for MemoryBridge.
@@ -13,6 +13,8 @@ get_pool is injected by server.py at startup to avoid circular imports.
 from __future__ import annotations
 
 from typing import Any
+
+from .validation import validate_uuid
 
 # Injected by server.py before any tool call; declared here so type checkers
 # know it exists and tools_read is importable without the pool being ready.
@@ -41,8 +43,11 @@ async def get_assisted_user_profile(assisted_user_id: str) -> dict:
         }
 
     Raises:
-        ValueError: if no assisted user with the given id exists.
+        ValueError: if no assisted user with the given id exists or if
+            assisted_user_id is not a valid UUID.
     """
+    validate_uuid(assisted_user_id, "assisted_user_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -99,7 +104,12 @@ async def get_existing_routines(assisted_user_id: str) -> list[dict]:
             "scheduled_time": str | None,   # "HH:MM" in 24-hour format
             "recurrence": str | None
         }
+        
+    Raises:
+        ValueError: if assisted_user_id is not a valid UUID
     """
+    validate_uuid(assisted_user_id, "assisted_user_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(

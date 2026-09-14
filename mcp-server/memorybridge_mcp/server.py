@@ -1,4 +1,4 @@
-"""
+﻿"""
 memorybridge_mcp.server
 -----------------------
 Local MCP server for MemoryBridge.
@@ -49,6 +49,7 @@ async def _get_pool() -> asyncpg.Pool:
             dsn=database_url,
             min_size=1,
             max_size=5,
+            command_timeout=30.0,  # 30 second timeout for runaway queries
             # Neon requires SSL; sslmode=require should be in the DSN.
             # asyncpg respects the sslmode query parameter in the DSN string.
         )
@@ -84,6 +85,7 @@ mcp.tool()(tools_write.get_today_routines)
 mcp.tool()(tools_write.mark_routine_complete)
 mcp.tool()(tools_write.create_help_alert)
 mcp.tool()(tools_write.get_alerts)
+mcp.tool()(tools_write.acknowledge_alert)
 mcp.tool()(tools_write.log_safety_decision)
 
 # ---------------------------------------------------------------------------

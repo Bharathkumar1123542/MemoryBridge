@@ -1,4 +1,4 @@
--- MemoryBridge — initial schema
+﻿-- MemoryBridge — initial schema
 -- Run once against the Neon PostgreSQL project:
 --   psql "$DATABASE_URL" -f db/migrations/0001_init.sql
 
@@ -129,11 +129,17 @@ CREATE TABLE alerts (
 -- Indexes
 -- idx_routines_assisted_user_status: used by GET /internal/today to find
 --   active routines for a specific assisted user efficiently.
--- idx_alerts_caregiver_status: used by GET /internal/alerts to list open
---   alerts for a caregiver, newest first.
+-- idx_alerts_caregiver_status_date: used by GET /internal/alerts to list
+--   open alerts for a caregiver, newest first. Includes created_at DESC
+--   to support efficient ORDER BY.
+-- idx_routine_completions_lookup: used by get_today_routines NOT EXISTS
+--   subquery to check if a routine was completed on a given date.
 -- ---------------------------------------------------------------------------
 CREATE INDEX idx_routines_assisted_user_status
     ON routines(assisted_user_id, status);
 
-CREATE INDEX idx_alerts_caregiver_status
-    ON alerts(caregiver_id, status);
+CREATE INDEX idx_alerts_caregiver_status_date
+    ON alerts(caregiver_id, status, created_at DESC);
+
+CREATE INDEX idx_routine_completions_lookup
+    ON routine_completions(routine_id, occurrence_date);

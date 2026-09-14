@@ -1,4 +1,4 @@
-"""
+﻿"""
 memorybridge_mcp.tools_write
 -----------------------------
 Write-side MCP tools for MemoryBridge.
@@ -20,6 +20,8 @@ get_pool is injected by server.py at startup to avoid circular imports.
 from __future__ import annotations
 
 from typing import Any
+
+from .validation import validate_uuid
 
 # Injected by server.py before any tool call.
 get_pool: Any = None
@@ -44,6 +46,10 @@ async def create_routine(
 
     Returns: { "id": str }
     """
+    # Validate UUIDs before database call
+    validate_uuid(assisted_user_id, "assisted_user_id")
+    validate_uuid(caregiver_id, "caregiver_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -76,9 +82,26 @@ async def save_routine_steps(
 
     Returns: { "saved": int }  (number of steps written)
     """
+    validate_uuid(routine_id, "routine_id")
+    
+    # Validate step structure
+    for i, step in enumerate(steps):
+        if "step_number" not in step:
+            raise ValueError(f"Step {i}: missing required field 'step_number'")
+        if "original_text" not in step:
+            raise ValueError(f"Step {i}: missing required field 'original_text'")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Verify routine exists before deleting steps
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM routines WHERE id = $1::uuid)",
+                routine_id,
+            )
+            if not exists:
+                raise ValueError(f"Routine '{routine_id}' does not exist")
+            
             # Clear any previous steps (e.g., on a retry) before re-inserting.
             await conn.execute(
                 "DELETE FROM routine_steps WHERE routine_id = $1::uuid",
@@ -128,6 +151,8 @@ async def update_routine_status(
 
     Returns: { "id": str, "status": str }
     """
+    validate_uuid(routine_id, "routine_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -167,12 +192,20 @@ async def approve_routine(routine_id: str, caregiver_id: str) -> dict:
     This is the single gate between a draft and what Maria sees.
     Only application code (FastAPI router) calls this; no Agent can.
 
+    CRITICAL SECURITY: Only approves routines that passed safety review
+    (safety_verdict = 'approved'). This prevents activation of routines
+    that were rejected by safety review then manually reset to pending.
+
     Returns: { "id": str, "status": "active", "activated_at": str }
 
     Raises:
         ValueError: if the routine is not in 'pending_caregiver_approval'
-            state, or does not belong to this caregiver.
+            state, does not belong to this caregiver, or did not pass
+            safety review.
     """
+    validate_uuid(routine_id, "routine_id")
+    validate_uuid(caregiver_id, "caregiver_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -184,6 +217,7 @@ async def approve_routine(routine_id: str, caregiver_id: str) -> dict:
             WHERE  id           = $1::uuid
               AND  caregiver_id = $2::uuid
               AND  status       = 'pending_caregiver_approval'
+              AND  safety_verdict = 'approved'
             RETURNING id, status, activated_at
             """,
             routine_id,
@@ -191,8 +225,9 @@ async def approve_routine(routine_id: str, caregiver_id: str) -> dict:
         )
         if row is None:
             raise ValueError(
-                f"Routine '{routine_id}' is not in pending_caregiver_approval "
-                f"state or does not belong to caregiver '{caregiver_id}'."
+                f"Routine '{routine_id}' cannot be approved: not found, "
+                f"wrong caregiver, not in pending_caregiver_approval state, "
+                f"or did not pass safety review (safety_verdict != 'approved')."
             )
         return {
             "id": str(row["id"]),
@@ -218,6 +253,9 @@ async def reject_routine(
 
     Returns: { "id": str, "status": "rejected" }
     """
+    validate_uuid(routine_id, "routine_id")
+    validate_uuid(caregiver_id, "caregiver_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -257,6 +295,8 @@ async def get_today_routines(assisted_user_id: str, date: str) -> list[dict]:
     Returns a list of routine dicts, each with a nested 'steps' list.
     Steps are in step_number order.
     """
+    validate_uuid(assisted_user_id, "assisted_user_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         routines = await conn.fetch(
@@ -265,6 +305,7 @@ async def get_today_routines(assisted_user_id: str, date: str) -> list[dict]:
                    r.title,
                    to_char(r.scheduled_time, 'HH24:MI') AS scheduled_time,
                    r.recurrence,
+                   r.status,
                    -- Exclude if already completed today
                    NOT EXISTS (
                        SELECT 1 FROM routine_completions rc
@@ -297,6 +338,7 @@ async def get_today_routines(assisted_user_id: str, date: str) -> list[dict]:
                     "title": r["title"],
                     "scheduled_time": r["scheduled_time"],
                     "recurrence": r["recurrence"],
+                    "status": r["status"],
                     "not_yet_completed": r["not_yet_completed"],
                     "steps": [
                         {
@@ -322,18 +364,33 @@ async def mark_routine_complete(routine_id: str, occurrence_date: str) -> dict:
     Done is safe.
 
     Returns: { "routine_id": str, "occurrence_date": str, "completed": True }
+    
+    Raises:
+        ValueError: If routine_id does not exist
     """
+    validate_uuid(routine_id, "routine_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
+        result = await conn.execute(
             """
             INSERT INTO routine_completions (routine_id, occurrence_date)
             VALUES ($1::uuid, $2::date)
             ON CONFLICT (routine_id, occurrence_date) DO NOTHING
+            RETURNING routine_id
             """,
             routine_id,
             occurrence_date,
         )
+        # Verify routine exists if no row was inserted due to conflict or error
+        if "INSERT" not in result:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM routines WHERE id = $1::uuid)",
+                routine_id,
+            )
+            if not exists:
+                raise ValueError(f"Routine '{routine_id}' does not exist")
+        
         return {
             "routine_id": routine_id,
             "occurrence_date": occurrence_date,
@@ -364,6 +421,9 @@ async def create_help_alert(
 
     Returns: { "id": str }
     """
+    validate_uuid(assisted_user_id, "assisted_user_id")
+    validate_uuid(caregiver_id, "caregiver_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -394,6 +454,8 @@ async def get_alerts(caregiver_id: str) -> list[dict]:
 
     Returns: list of alert dicts.
     """
+    validate_uuid(caregiver_id, "caregiver_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
@@ -435,6 +497,55 @@ async def get_alerts(caregiver_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# acknowledge_alert
+# ---------------------------------------------------------------------------
+async def acknowledge_alert(
+    alert_id: str,
+    caregiver_id: str,
+) -> dict:
+    """
+    Mark an alert as acknowledged by the caregiver.
+
+    Idempotent — re-acknowledging an already-acknowledged alert returns
+    the current state without error. Sets acknowledged_at timestamp if not
+    already set; transitions status to 'acknowledged'.
+
+    Returns: { "id": str, "status": "acknowledged", "acknowledged_at": str | null }
+    """
+    validate_uuid(alert_id, "alert_id")
+    validate_uuid(caregiver_id, "caregiver_id")
+    
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE alerts
+            SET    status          = 'acknowledged',
+                   acknowledged_at = COALESCE(acknowledged_at, now())
+            WHERE  id              = $1::uuid
+              AND  caregiver_id    = $2::uuid
+            RETURNING id, status, acknowledged_at
+            """,
+            alert_id,
+            caregiver_id,
+        )
+        if row is None:
+            raise ValueError(
+                f"Alert '{alert_id}' not found or does not belong to "
+                f"caregiver '{caregiver_id}'."
+            )
+        return {
+            "id": str(row["id"]),
+            "status": row["status"],
+            "acknowledged_at": (
+                row["acknowledged_at"].isoformat()
+                if row["acknowledged_at"]
+                else None
+            ),
+        }
+
+
+# ---------------------------------------------------------------------------
 # log_safety_decision
 # ---------------------------------------------------------------------------
 async def log_safety_decision(
@@ -457,6 +568,8 @@ async def log_safety_decision(
 
     Returns: { "id": str }
     """
+    validate_uuid(routine_id, "routine_id")
+    
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
