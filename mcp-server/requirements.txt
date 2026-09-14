@@ -1,0 +1,10 @@
+# mcp-server/requirements.txt
+# Dependencies for the memorybridge-mcp subprocess.
+# This process is bundled inside the agent-backend Docker image and
+# started via StdioServerParameters at agent-backend startup.
+
+# MCP server framework
+mcp>=1.0.0
+
+# Async Postgres driver — the sole holder of DATABASE_URL in this system
+asyncpg>=0.29.0

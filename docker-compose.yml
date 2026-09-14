@@ -1,0 +1,89 @@
+# docker-compose.yml
+# MemoryBridge — local development stack
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in all values.
+#   2. Run the migration:  psql "$DATABASE_URL" -f db/migrations/0001_init.sql
+#   3. (Optional) Seed demo data: psql "$DATABASE_URL" -f db/seed.sql
+#
+# Usage:
+#   docker-compose up --build        # first run or after code changes
+#   docker-compose up                # subsequent runs (uses cached images)
+#   docker-compose down              # stop and remove containers
+#
+# Architecture note:
+#   - web  is the only service with a published port (3000 → host).
+#   - agent-backend has no published port — it is reachable only via the
+#     shared Docker network from the web service, matching the Fargate
+#     topology (architecture.md §4.2).
+#   - The MCP subprocess is launched INSIDE the agent-backend container
+#     by the Python application at startup — it is not a separate service.
+
+
+
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # agent-backend — FastAPI + Strands Agents + MCP subprocess
+  # Private service: reachable only from web via Docker internal network.
+  # ---------------------------------------------------------------------------
+  agent-backend:
+    build:
+      context: .
+      dockerfile: agent-backend/Dockerfile
+    container_name: memorybridge-agent-backend
+    environment:
+      # Postgres URL — consumed by the MCP subprocess only (not FastAPI directly)
+      DATABASE_URL: ${DATABASE_URL}
+      # Bedrock model tiers — see architecture.md §12
+      BEDROCK_MODEL_ID_REASONING: ${BEDROCK_MODEL_ID_REASONING}
+      BEDROCK_MODEL_ID_FAST: ${BEDROCK_MODEL_ID_FAST}
+      # AWS credentials / region for Bedrock + Secrets Manager
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # HMAC key for verifying internal service tokens from web
+      SESSION_SECRET: ${SESSION_SECRET}
+    # No ports: published to host — agent-backend is private.
+    expose:
+      - "8000"
+    networks:
+      - memorybridge-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # web — Next.js App Router (BFF + UI)
+  # Public-facing service. Resolves session cookies server-side before
+  # forwarding requests to agent-backend over the internal Docker network.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    container_name: memorybridge-web
+    environment:
+      # Internal backend URL — Docker service name resolves on the shared network
+      INTERNAL_API_BASE_URL: http://agent-backend:8000
+      # HMAC key for issuing + verifying httpOnly session cookies
+      SESSION_SECRET: ${SESSION_SECRET}
+      # Build-time display name — not a secret
+      NEXT_PUBLIC_APP_NAME: MemoryBridge
+    ports:
+      - "3000:3000"
+    networks:
+      - memorybridge-internal
+    depends_on:
+      agent-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  memorybridge-internal:
+    driver: bridge

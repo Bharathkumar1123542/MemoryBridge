@@ -1,0 +1,52 @@
+{
+  "family": "memorybridge-agent-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/memorybridge-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/memorybridge-agent-backend-task-role",
+  "containerDefinitions": [
+    {
+      "name": "agent-backend",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/memorybridge-agent-backend:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "BEDROCK_MODEL_ID_REASONING", "value": "us.anthropic.claude-3-5-sonnet-20241022-v2:0" },
+        { "name": "BEDROCK_MODEL_ID_FAST",      "value": "us.anthropic.claude-3-haiku-20240307-v1:0" },
+        { "name": "AWS_REGION",                 "value": "us-east-1" }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:memorybridge/database-url"
+        },
+        {
+          "name": "SESSION_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:memorybridge/session-secret"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/memorybridge-agent-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 10,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      }
+    }
+  ]
+}
